@@ -1,6 +1,6 @@
 # mcp-winaccess-win
 
-**Version 1.6.0** · Windows-only desktop automation MCP server. Built directly on the OS APIs —
+**Version 1.8.0** · Windows-only desktop automation MCP server. Built directly on the OS APIs —
 **ctypes** (`SendInput`, `ImageGrab`, Win32 windows, clipboard) and **UI Automation** via
 `comtypes` — with **no `pyautogui` / `pywinauto` / `pywin32`**.
 
@@ -43,6 +43,7 @@ mcp-winaccess-win
 | `--token` | *(none)* | Bearer token required for HTTP (remote only) |
 | `--tesseract_cmd` | `auto` | `auto`, or an explicit path to `tesseract.exe` |
 | `--auto-tesseract` | on | automatic Tesseract install; `--no-auto-tesseract` disables it |
+| `--no-shell` | off | disables the `run_command` tool (shell execution); enabled by default |
 
 Local (stdio) is the default and needs no arguments. To serve over HTTP, protect the desktop
 with a token — a token is **required** whenever `--listen` is not loopback:
@@ -116,7 +117,7 @@ Modules: `mcp_winaccess_win/server.py` (tool wrappers), `mcp_winaccess_win/adapt
 
 ## Tools
 
-90 tools. They are registered only when the adapter advertises the matching **capability**;
+94 tools. They are registered only when the adapter advertises the matching **capability**;
 unsupported tools are hidden.
 
 ### Screenshots and display — `screenshot`, `screenshot_region`, `screenshot_monitor`, `screenshot_window`, `screenshot_element`
@@ -137,6 +138,7 @@ unsupported tools are hidden.
 - `type_text(text)` (Unicode), `hotkey(keys)` (e.g. `"ctrl+shift+s"`).
 - `press_key(key)` — a key (`enter`, `tab`, `esc`, `f5`, letters/digits) or a system key (`win`, `volumeup`, `volumedown`, `volumemute`, `playpause`, `nexttrack`, `prevtrack`, `printscreen`).
 - `key_down(key)` / `key_up(key)` — hold/release keys (e.g. Shift range selection).
+- `sleep(seconds)` — wait a fixed amount of time.
 
 ### Clipboard — `clipboard`
 - `clipboard_get()`, `clipboard_set(text)`, `clipboard_clear()`.
@@ -158,7 +160,7 @@ unsupported tools are hidden.
 `value` accepts a partial window title (`str`), a window handle (`int`), or a prefix: `title:`, `class:`, `pid:N`, `exe:name.exe`. `list_windows(process=...)` filters by exe name or PID.
 
 ### Menus and dialogs — `menus`, `dialogs`, `tray`
-- `menu_select(value, path)` (e.g. `"File->Save As"`), `context_menu_click(x, y, item)`.
+- `menu_select(value, path)` (e.g. `"File->Save As"`), `get_menu_items(value, menu="")` (discover the menu bar / a menu's items), `context_menu_click(x, y, item)`.
 - `list_dialogs()`, `handle_dialog(button_text, title="")`.
 - `file_dialog_set_path(path, title="")`, `file_dialog_confirm(title="")`.
 - `tray_icon_click(name, action="left")`.
@@ -166,8 +168,10 @@ unsupported tools are hidden.
 ### UI tree (semantic controls) — `ui_tree`
 - `get_all_controls(value, limit=150, query="", control_type="")` — use the returned `ID` (`element_N`)
   or `Name`/`AutoID` as `control_identifier`; each row includes `Rect` and `Center`.
-- `click_element`, `double_click_element`, `get_text`, `set_text(value, control_identifier, text, mode="value")`
-  (`mode="type"` forces focus + typing), `select_item`,
+- `click_element(value, control_identifier, clicks=1)` (`clicks=2` = double-click), `get_text`,
+  `set_text(value, control_identifier, text, mode="value", clear=False)`
+  (`mode="type"` forces focus + typing; `clear=True` selects-all before typing), `get_window_text(value)` (flat text dump),
+  `select_item`,
   `toggle_checkbox`, `get_control_state`, `set_slider`, `get_selected_text`, `scroll_into_view`,
   `wait_for_element`, `drag_element`.
 
@@ -175,6 +179,7 @@ unsupported tools are hidden.
 - `get_element_at_point(x, y)` — element under a screen point.
 - `get_active_element()` — the currently focused control.
 - `highlight_element(value, control_identifier, duration=1.0, color="red", width=3)` — temporary rectangle (visual confirmation).
+- `highlight_region(x, y, width, height, duration=1.0, color="red", border_width=3)` — temporary rectangle over an arbitrary screen region.
 - `wait_for_element_gone(value, control_identifier, timeout=10)` — wait until a control disappears.
 - `expand_element(value, control_identifier)` / `collapse_element(value, control_identifier)` — tree/expander controls.
 - `get_control_state(value, control_identifier)` — enabled/offscreen/checked/value (works for checkboxes, menu items, sliders).
@@ -193,10 +198,11 @@ unsupported tools are hidden.
 - `switch_desktop(direction="right")` — switch to the adjacent desktop.
 - `move_window_to_desktop(value, direction="right")` — move a window to the adjacent desktop.
 
-### Processes — `process`
+### Processes and shell — `process`, `shell`
 - `run_app(path, args="", cwd="")` — launch an application detached (returns its PID); pair with `wait_for_window(require_ready=True)`.
 - `kill_process(pid_or_name)` — force-kill a process tree (irreversible; prefer `close_window`).
 - `list_processes(filter="")` — list running processes as `PID N | name.exe`.
+- `run_command(command, cwd="", timeout=30, shell="cmd")` — run a console command and return its exit code and output (`shell="powershell"` for PowerShell). Disable with `--no-shell`.
 
 ## Examples
 

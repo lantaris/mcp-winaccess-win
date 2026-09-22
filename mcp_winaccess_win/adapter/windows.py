@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import subprocess
 import time
 from typing import Any
 
+from mcp_winaccess_win.adapter import base as base_module
 from mcp_winaccess_win.adapter import win32_clipboard as clipboard
 from mcp_winaccess_win.adapter import win32_input as input
 from mcp_winaccess_win.adapter import win32_notifications
@@ -51,6 +53,8 @@ class WindowsAdapter(BaseAdapter):
             "window_snap",
             "window_topmost",
         }
+        if base_module._shell_enabled:
+            caps.add("shell")
         if self.uia is not None:
             caps |= {"ui_tree", "menus", "dialogs"}
         return caps
@@ -471,13 +475,40 @@ class WindowsAdapter(BaseAdapter):
                 break
         return "\n".join(lines) if lines else "No controls found."
 
-    def click_element(self, value, control_identifier: str) -> str:
+    def get_window_text(self, value, limit: int = 200) -> str:
+        error = self._require_uia()
+        if error:
+            return error
+        element = self._window_element(value)
+        if element is None:
+            return f"ERROR: Window '{value}' not found."
+        seen: set[str] = set()
+        lines: list[str] = []
+        for control in self.uia.descendants(element):
+            text = (self.uia.info(control).get("text") or "").strip()
+            if text and text not in seen:
+                seen.add(text)
+                lines.append(text)
+                if len(lines) >= limit:
+                    break
+        return "\n".join(lines) if lines else "No text found."
+
+    def click_element(self, value, control_identifier: str, clicks: int = 1) -> str:
         error = self._require_uia()
         if error:
             return error
         control = self._find_control(value, control_identifier)
         if control is None:
             return f"ERROR: control '{control_identifier}' not found."
+        if clicks and clicks >= 2:
+            center = self.uia.center(control)
+            if center is None:
+                return f"ERROR: control '{control_identifier}' has no position."
+            if clicks == 2:
+                input.double_click(center[0], center[1])
+            else:
+                input.click(center[0], center[1], "left", clicks)
+            return f"Clicked control '{control_identifier}' x{clicks} at {center}"
         if self.uia.invoke(control) or self.uia.legacy_default_action(control):
             return f"Clicked control '{control_identifier}'"
         center = self.uia.center(control)
@@ -486,16 +517,6 @@ class WindowsAdapter(BaseAdapter):
         input.click(center[0], center[1])
         return f"Clicked control '{control_identifier}' at {center}"
 
-    def double_click_element(self, value, control_identifier: str) -> str:
-        control = self._find_control(value, control_identifier)
-        if control is None:
-            return f"ERROR: control '{control_identifier}' not found."
-        center = self.uia.center(control)
-        if center is None:
-            return f"ERROR: control '{control_identifier}' has no position."
-        input.double_click(center[0], center[1])
-        return f"Double clicked control '{control_identifier}' at {center}"
-
     def get_text(self, value, control_identifier: str) -> str:
         control = self._find_control(value, control_identifier)
         if control is None:
@@ -503,17 +524,21 @@ class WindowsAdapter(BaseAdapter):
         text = self.uia.value_get(control) or self.uia.text(control) or self.uia.info(control)["name"]
         return f"Text: '{text}'"
 
-    def set_text(self, value, control_identifier: str, text: str, mode: str = "value") -> str:
+    def set_text(self, value, control_identifier: str, text: str, mode: str = "value", clear: bool = False) -> str:
         control = self._find_control(value, control_identifier)
         if control is None:
             return f"ERROR: control '{control_identifier}' not found."
         if mode == "type":
             self.uia.set_focus(control)
+            if clear:
+                input.hotkey("ctrl+a")
             input.type_text(text)
             return f"Typed text '{text}' into '{control_identifier}'"
         if self.uia.value_set(control, text):
             return f"Set text '{text}' into '{control_identifier}'"
         self.uia.set_focus(control)
+        if clear:
+            input.hotkey("ctrl+a")
         input.type_text(text)
         return f"Typed text '{text}' into '{control_identifier}'"
 
@@ -770,6 +795,52 @@ class WindowsAdapter(BaseAdapter):
             return f"Selected menu '{path}'"
         return f"ERROR: could not select menu '{path}'."
 
+    def get_menu_items(self, value, menu: str = "") -> str:
+        error = self._require_uia()
+        if error:
+            return error
+        element = self._window_element(value)
+        if element is None:
+            return f"ERROR: Window '{value}' not found."
+        menubar = self.uia.find(element, control_type="MenuBar")
+        scope = menubar if menubar is not None else element
+        if menu:
+            target = self.uia.find(scope, name=menu, control_type="MenuItem")
+            if target is None:
+                return f"ERROR: menu '{menu}' not found."
+            self.uia.expand(target)
+            time.sleep(0.3)
+            names = [self.uia.info(child)["name"] for child in self.uia.children(target)]
+            names = [n for n in names if n and n.strip()]
+            self.uia.collapse(target)
+            if not names:
+                center = self.uia.center(target)
+                if center:
+                    input.click(center[0], center[1])
+                    time.sleep(0.4)
+                    names = self._popup_menu_items()
+                    input.press_key("esc")
+            return f"Menu '{menu}': " + (", ".join(names) if names else "(no items)")
+        names = [self.uia.info(child)["name"] for child in self.uia.children(scope)]
+        names = [n for n in names if n and n.strip()]
+        return "Menu bar: " + (", ".join(names) if names else "(no menu bar)")
+
+    def _popup_menu_items(self) -> list[str]:
+        names: list[str] = []
+        for info in win.enum_windows():
+            if info["class"] != "#32768":
+                continue
+            element = self.uia.element_from_handle(info["handle"])
+            if element is None:
+                continue
+            for child in self.uia.descendants(element, max_items=200):
+                name = (self.uia.info(child).get("name") or "").strip()
+                if name and name not in names:
+                    names.append(name)
+            if names:
+                break
+        return names
+
     def context_menu_click(self, x: int, y: int, item: str) -> str:
         input.right_click(x, y)
         if self.uia is None:
@@ -843,6 +914,12 @@ class WindowsAdapter(BaseAdapter):
 
         win32_overlay.highlight(rect[0], rect[1], rect[2], rect[3], duration, color, width)
         return f"Highlighted '{control_identifier}' for {duration}s"
+
+    def highlight_region(self, x: int, y: int, width: int, height: int, duration: float = 1.0, color: str = "red", border_width: int = 3) -> str:
+        from mcp_winaccess_win.adapter import win32_overlay
+
+        win32_overlay.highlight(x, y, x + width, y + height, duration, color, border_width)
+        return f"Highlighted region ({x}, {y}, {width}, {height}) for {duration}s"
 
     def get_element_at_point(self, x: int, y: int) -> str:
         error = self._require_uia()
@@ -1121,6 +1198,26 @@ class WindowsAdapter(BaseAdapter):
         if not items:
             return "No processes found."
         return "\n".join(f"PID {pid} | {exe}" for pid, exe in sorted(items, key=lambda item: item[1].lower()))
+
+    def run_command(self, command: str, cwd: str = "", timeout: float = 30.0, shell: str = "cmd") -> str:
+        if not (command or "").strip():
+            return "ERROR: command is required."
+        try:
+            code, out, err = process.run_command(command, cwd, timeout, shell)
+        except subprocess.TimeoutExpired:
+            return f"ERROR: command timed out after {timeout}s."
+        except Exception as exc:
+            return f"ERROR: command failed: {exc}"
+        parts = [f"exit={code}"]
+        if out.strip():
+            parts.append(out.rstrip())
+        if err.strip():
+            parts.append("[stderr]")
+            parts.append(err.rstrip())
+        result = "\n".join(parts)
+        if len(result) > 32000:
+            result = result[:32000] + "\n... (output truncated)"
+        return result
 
     def wait_for_pixel_color(self, x: int, y: int, color: str, timeout: float = 10.0, tolerance: int = 0) -> str:
         target = self._parse_color(color)

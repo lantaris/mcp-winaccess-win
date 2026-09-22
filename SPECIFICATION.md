@@ -1,4 +1,4 @@
-# Specification — mcp-winaccess-win v1.6.0
+# Specification — mcp-winaccess-win v1.8.0
 
 ## Platform
 - **Windows only** (10/11, x64). The package imports Windows-specific ctypes modules and does not
@@ -13,7 +13,7 @@
   - `--token` enables Bearer authentication on the HTTP endpoint and is **required** when
     `--listen` is not loopback.
 - Tools are registered by capability (`adapter.supports(capability)`); unsupported tools are
-  absent from `tools/list`. 90 tools are exposed on Windows.
+  absent from `tools/list`. 94 tools are exposed on Windows.
 
 ## Command-line arguments
 | Argument | Default | Meaning |
@@ -24,6 +24,7 @@
 | `--token` | *(none)* | Bearer token required for HTTP (remote only) |
 | `--tesseract_cmd` | `auto` | `auto`, or an explicit path to `tesseract.exe` |
 | `--auto-tesseract` / `--no-auto-tesseract` | on | automatic Tesseract install |
+| `--no-shell` | off | disables the `run_command` tool (shell execution); enabled by default |
 
 ## Architecture
 - `mcp_winaccess_win/server.py` — thin `@tool(description, capability)` wrappers gated by `adapter.supports(capability)`.
@@ -40,7 +41,8 @@
 - `mcp_winaccess_win/adapter/win32_overlay.py` — temporary highlight rectangle (GDI).
 - `mcp_winaccess_win/adapter/win32_notifications.py` — notification listing via WinRT `UserNotificationListener`.
 - `mcp_winaccess_win/adapter/win32_process.py` — process launch (detached, `DETACHED_PROCESS` + `DEVNULL`),
-  force-kill (`taskkill /F /T`) and enumeration (Toolhelp32 snapshot).
+  force-kill (`taskkill /F /T`), enumeration (Toolhelp32 snapshot), and `run_command` (console command
+  execution via `cmd.exe /c` or PowerShell, with captured output decoded as UTF-8 → OEM).
 - `mcp_winaccess_win/adapter/tesseract_setup.py` — resolves the Tesseract binary or auto-installs it (downloads the
   UB-Mannheim installer, extracts it with 7-Zip into `%LOCALAPPDATA%\mcp-winaccess\tesseract`, and
   fetches `eng`/`rus` language data from tessdata_fast).
@@ -52,7 +54,7 @@
 `screenshot`, `screenshot_region`, `screenshot_monitor`, `screenshot_window`, `screenshot_element`,
 `input`, `monitors`, `clipboard`, `vision`, `ocr`, `window_list`, `window_activate`, `window_close`,
 `window_minimize`, `window_maximize`, `window_move`, `window_resize`, `window_snap`, `window_topmost`,
-`tray`, `ui_tree`, `menus`, `dialogs`, `notifications`, `desktop`, `process`.
+`tray`, `ui_tree`, `menus`, `dialogs`, `notifications`, `desktop`, `process`, `shell`.
 
 ## Return conventions
 - Every tool returns a human-readable string; failures start with `ERROR: `.
@@ -86,6 +88,18 @@
 - `switch_desktop` / `move_window_to_desktop` use the `Win+Ctrl(+Shift)+Arrow` shortcuts.
 - Tesseract language data: `eng` and `rus` are downloaded automatically; add more by dropping
   `*.traineddata` into the managed `tessdata` directory.
+
+## Changes in 1.8.0
+- Added `run_command` (capability `shell`): runs a console command via `cmd.exe /c` (default) or
+  PowerShell and returns the exit code and captured output (decoded UTF-8 → OEM). Controlled by the
+  `--no-shell` flag (enabled by default).
+
+## Changes in 1.7.0
+- Added utility tools for agents: `sleep` (fixed delay), `get_menu_items` (discover menu bar / menu
+  items), `get_window_text` (flat text dump of a window), `highlight_region` (highlight an arbitrary
+  screen rectangle).
+- `click_element` gained a `clicks` parameter (merging `double_click_element`, which was removed);
+  `set_text` gained a `clear` parameter (select-all before typing).
 
 ## Changes in 1.6.0
 - Configuration moved from environment variables to command-line arguments: `--transport

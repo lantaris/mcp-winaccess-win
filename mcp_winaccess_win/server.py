@@ -11,6 +11,7 @@ import argparse
 import contextlib
 import io
 import sys
+import time
 from typing import Annotated, Literal
 
 from mcp.server.mcpserver import Image, MCPServer
@@ -18,6 +19,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from mcp_winaccess_win.adapter import get_adapter, tesseract_setup
+from mcp_winaccess_win.adapter.base import set_shell_enabled
 
 if sys.platform != "win32":
     raise RuntimeError(f"mcp-winaccess-win is Windows-only (detected platform: {sys.platform}).")
@@ -68,42 +70,49 @@ def _build_parser() -> argparse.ArgumentParser:
         default="",
         help="Bearer token required for --transport remote (via the 'Authorization' header).",
     )
+    parser.add_argument(
+        "--no-shell",
+        action="store_true",
+        help="disable the run_command tool (shell execution). Enabled by default.",
+    )
     return parser
 
 
 _args = _build_parser().parse_args()
 tesseract_setup.configure(tesseract_cmd=_args.tesseract_cmd, auto_tesseract=_args.auto_tesseract)
+set_shell_enabled(not _args.no_shell)
 
 adapter = get_adapter()
 
 INSTRUCTIONS = """\
-mcp-winaccess drives a live Windows desktop (mouse, keyboard, clipboard, windows, UI Automation).
+mcp-winaccess drives a live Windows desktop: mouse, keyboard, clipboard, windows, UI Automation, OCR/vision, and shell.
 
 Conventions (apply to every tool unless stated otherwise):
-- Coordinates are ABSOLUTE screen pixels in the virtual desktop (all monitors, DPI-aware). (0, 0) is the
-  top-left of the primary monitor; a monitor to the left/top of it has negative coordinates.
-- `value` identifies a window. Accepted forms: a partial title or class substring (str), a window
-  handle (int or numeric string), or a prefix: 'title:', 'class:', 'pid:N', 'exe:name.exe'.
-- `control_identifier` is either an 'element_N' ID returned by get_all_controls, or a control
-  Name/AutoID. 'element_N' is the index in the FULL descendant walk of the window: query/control_type
-  in get_all_controls only filter the printed rows, they do NOT renumber the IDs. IDs are not stable
-  if the UI changes between calls.
-- Return contract: a human-readable string on success; on failure a string starting with 'ERROR:'.
-  Screenshot tools return an image (JPEG) instead of a string.
-- Tools are registered by capability: some tools are ABSENT from the list when the platform/feature
-  is unavailable (UI tree needs comtypes; vision needs opencv-python; OCR needs pytesseract - the
-  Tesseract binary is downloaded and installed automatically on first OCR use).
-- Many tools have SIDE EFFECTS: moving the cursor, changing focus, typing, replacing the clipboard,
-  closing windows, switching virtual desktops, or holding keys/mouse buttons. Prefer read-only tools
-  (screenshots, list_*, get_*) to inspect state first.
-- Process tools: run_app launches an application detached; kill_process force-kills a process tree
-  and is IRREVERSIBLE. Prefer close_window for a graceful close.
+- Coordinates are ABSOLUTE screen pixels in the virtual desktop (DPI-aware). (0, 0) is the primary monitor's
+  top-left; a monitor to the left/top of it has negative coordinates.
+- `value` identifies a window: a partial title/class substring, a window handle (int), or a prefix
+  'title:', 'class:', 'pid:N', 'exe:name.exe'.
+- `control_identifier` is an 'element_N' ID from get_all_controls, or a control Name/AutoID. 'element_N' indexes the
+  FULL descendant walk — get_all_controls filters only the printed rows and does NOT renumber IDs. IDs are not stable
+  across UI changes.
+- Return contract: a human-readable string on success; on failure a string starting with 'ERROR:'. Screenshot tools
+  return a JPEG image instead of a string.
+- Tools are capability-gated: some may be absent (UI tree needs comtypes; vision needs opencv-python; shell can be
+  disabled with --no-shell). OCR auto-installs the Tesseract binary on first use.
+
+Workflow:
+- Inspect first: prefer read-only tools (screenshot, list_*, get_*, ocr_*, find_text_on_screen) to see current state.
+- Prefer semantic controls (click_element, set_text, get_text, select_item) over raw coordinates when a tree exists.
 - Call switch_to_window before typing/clicking if the target may not be focused.
-- Tool annotations (readOnlyHint/destructiveHint/idempotentHint) mark which tools only observe state
-  and which change it; clients may use them to decide whether to ask for confirmation.
+- Many tools have side effects (move cursor, change focus, type, replace clipboard, close windows, switch desktops,
+  hold keys). Always release key_down/mouse_down with key_up/mouse_up.
+- Processes/shell: run_app launches detached (returns PID); kill_process force-kills a process tree (IRREVERSIBLE —
+  prefer close_window); run_command runs a console command (cmd.exe by default, PowerShell via shell='powershell')
+  and returns its exit code and output. sleep(seconds) is a plain fixed delay.
+- Tool annotations (readOnlyHint/destructiveHint/idempotentHint) mark observing vs state-changing tools.
 """
 
-mcp = MCPServer("mcp-winaccess", version="1.6.0", instructions=INSTRUCTIONS)
+mcp = MCPServer("mcp-winaccess", version="1.8.0", instructions=INSTRUCTIONS)
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, idempotent_hint=True)
 READ_ONLY_ONCE = ToolAnnotations(read_only_hint=True)
@@ -863,8 +872,8 @@ def get_all_controls(
 
 
 @tool(
-    "click_element: Clicks a control (value, control_identifier). Prefers the Invoke pattern; falls back "
-    "to a coordinate click at the control's center.",
+    "click_element: Clicks a control (value, control_identifier). clicks=1 prefers the Invoke pattern and "
+    "falls back to a coordinate click; clicks=2 (or more) double/multi-clicks at the control's center.",
     capability="ui_tree",
     title="Click UI control",
     annotations=WRITE,
@@ -872,21 +881,9 @@ def get_all_controls(
 def click_element(
     value: Annotated[str, Field(description=VALUE)],
     control_identifier: Annotated[str, Field(description=CTRL)],
+    clicks: Annotated[int, Field(description="number of clicks (>= 1); 2 = double-click")] = 1,
 ) -> str:
-    return adapter.click_element(value, control_identifier)
-
-
-@tool(
-    "double_click_element: Double-clicks a control at its center (coordinate click). Params: value, control_identifier.",
-    capability="ui_tree",
-    title="Double-click UI control",
-    annotations=WRITE,
-)
-def double_click_element(
-    value: Annotated[str, Field(description=VALUE)],
-    control_identifier: Annotated[str, Field(description=CTRL)],
-) -> str:
-    return adapter.double_click_element(value, control_identifier)
+    return adapter.click_element(value, control_identifier, clicks)
 
 
 @tool(
@@ -905,7 +902,7 @@ def get_text(
 @tool(
     "set_text: Sets a control's text. mode='value' (default) uses the Value pattern (instant, no focus) "
     "and falls back to focus + typing; mode='type' always focuses the control and types via SendInput. "
-    "It does NOT clear the field first. Params: value, control_identifier, text, mode.",
+    "clear=True selects-all before typing (so existing content is replaced). Params: value, control_identifier, text, mode, clear.",
     capability="ui_tree",
     title="Set control text",
     annotations=WRITE,
@@ -915,8 +912,9 @@ def set_text(
     control_identifier: Annotated[str, Field(description=CTRL)],
     text: Annotated[str, Field(description="text to set")],
     mode: Literal["value", "type"] = "value",
+    clear: Annotated[bool, Field(description="select existing text before typing (mode='type' only)")] = False,
 ) -> str:
-    return adapter.set_text(value, control_identifier, text, mode)
+    return adapter.set_text(value, control_identifier, text, mode, clear)
 
 
 @tool(
@@ -1265,8 +1263,7 @@ def compare_screenshots(
 
 @tool(
     "list_notifications: Lists current Windows notifications via the WinRT UserNotificationListener (no UI "
-    "opened; may require user permission). NOTE: non-ASCII text may be garbled because the PowerShell "
-    "output is decoded with the wrong encoding.",
+    "opened; may require user permission).",
     capability="notifications",
     title="List notifications",
     annotations=READ_ONLY,
@@ -1370,6 +1367,85 @@ def kill_process(
 )
 def list_processes(filter: Annotated[str, Field(description="image-name substring; empty = all")] = "") -> str:
     return adapter.list_processes(filter)
+
+
+@tool(
+    "run_command: Runs a console command and returns its exit code and output. shell='cmd' (default) runs via "
+    "cmd.exe /c (supports builtins, pipes, redirection); shell='powershell' runs via PowerShell. Blocks up to "
+    "timeout seconds. Output is truncated to ~32 KB. NOTE: this executes arbitrary commands on the host.",
+    capability="shell",
+    title="Run console command",
+    annotations=WRITE,
+)
+def run_command(
+    command: Annotated[str, Field(description="command line to run")],
+    cwd: Annotated[str, Field(description="optional working directory")] = "",
+    timeout: Annotated[float, Field(description="max seconds to wait (default 30)")] = 30.0,
+    shell: Literal["cmd", "powershell"] = "cmd",
+) -> str:
+    return adapter.run_command(command, cwd, timeout, shell)
+
+
+# ---------------------------------------------------------------------------
+# Utility helpers
+# ---------------------------------------------------------------------------
+
+
+@tool(
+    "sleep: Waits (blocks) for the given number of seconds. Use for a fixed delay between actions.",
+    title="Sleep (wait)",
+    annotations=READ_ONLY,
+)
+def sleep(seconds: Annotated[float, Field(description="seconds to wait (>= 0)")] = 1.0) -> str:
+    seconds = max(0.0, min(float(seconds), 3600.0))
+    time.sleep(seconds)
+    return f"Slept {seconds}s"
+
+
+@tool(
+    "get_menu_items: Lists the menu bar items of a window (value). Pass menu='Name' to expand that menu and "
+    "list its sub-items. Use to discover menu paths before calling menu_select.",
+    capability="menus",
+    title="List menu items",
+    annotations=READ_ONLY,
+)
+def get_menu_items(
+    value: Annotated[str, Field(description=VALUE)],
+    menu: Annotated[str, Field(description="optional top-level menu name to expand and list")] = "",
+) -> str:
+    return adapter.get_menu_items(value, menu)
+
+
+@tool(
+    "get_window_text: Dumps the visible text of a window (value): the Value/Text/Name of its controls, one "
+    "per line, deduplicated. Use to read what is on screen without OCR.",
+    capability="ui_tree",
+    title="Get window text",
+    annotations=READ_ONLY,
+)
+def get_window_text(
+    value: Annotated[str, Field(description=VALUE)],
+    limit: Annotated[int, Field(description="max lines to return")] = 200,
+) -> str:
+    return adapter.get_window_text(value, limit)
+
+
+@tool(
+    "highlight_region: Draws a temporary rectangle over an absolute screen rectangle (x, y, width, height) "
+    "for visual confirmation. The call BLOCKS for duration seconds.",
+    title="Highlight region",
+    annotations=WRITE_IDEMPOTENT,
+)
+def highlight_region(
+    x: Annotated[int, Field(description="absolute left X")],
+    y: Annotated[int, Field(description="absolute top Y")],
+    width: Annotated[int, Field(description="rectangle width in px")],
+    height: Annotated[int, Field(description="rectangle height in px")],
+    duration: Annotated[float, Field(description="how long to show the rectangle, in seconds")] = 1.0,
+    color: Annotated[str, Field(description="red|green|blue|yellow|orange|white|magenta")] = "red",
+    border_width: Annotated[int, Field(description="rectangle border width in px")] = 3,
+) -> str:
+    return adapter.highlight_region(x, y, width, height, duration, color, border_width)
 
 
 class _BearerAuthMiddleware:

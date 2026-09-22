@@ -67,6 +67,14 @@ SYSTEM_KEYS = {
     "print_screen": "printscreen",
 }
 
+_shell_enabled = True
+
+
+def set_shell_enabled(enabled: bool) -> None:
+    """Enable/disable the 'shell' capability (run_command)."""
+    global _shell_enabled
+    _shell_enabled = bool(enabled)
+
 
 class BaseAdapter:
     """Shared interface. The Windows adapter provides the low-level operations."""
@@ -312,6 +320,9 @@ class BaseAdapter:
     def list_processes(self, filter: str = "") -> str:
         return "ERROR: process listing is not supported on this platform."
 
+    def run_command(self, command: str, cwd: str = "", timeout: float = 30.0, shell: str = "cmd") -> str:
+        return "ERROR: shell execution is not supported on this platform."
+
     def window_rect(self, value) -> tuple | None:
         return None
 
@@ -395,16 +406,13 @@ class BaseAdapter:
     def get_all_controls(self, value, limit: int = 150, query: str = "", control_type: str = "") -> str:
         return "ERROR: UI tree automation is not supported on this platform."
 
-    def click_element(self, value, control_identifier: str) -> str:
-        return "ERROR: UI tree automation is not supported on this platform."
-
-    def double_click_element(self, value, control_identifier: str) -> str:
+    def click_element(self, value, control_identifier: str, clicks: int = 1) -> str:
         return "ERROR: UI tree automation is not supported on this platform."
 
     def get_text(self, value, control_identifier: str) -> str:
         return "ERROR: UI tree automation is not supported on this platform."
 
-    def set_text(self, value, control_identifier: str, text: str, mode: str = "value") -> str:
+    def set_text(self, value, control_identifier: str, text: str, mode: str = "value", clear: bool = False) -> str:
         return "ERROR: UI tree automation is not supported on this platform."
 
     def select_item(self, value, control_identifier: str, item: str) -> str:
@@ -508,3 +516,12 @@ class BaseAdapter:
 
     def move_window_to_desktop(self, value, direction: str = "right") -> str:
         return "ERROR: virtual desktops are not supported on this platform."
+
+    def get_menu_items(self, value, menu: str = "") -> str:
+        return "ERROR: menu automation is not supported on this platform."
+
+    def get_window_text(self, value, limit: int = 200) -> str:
+        return "ERROR: UI tree automation is not supported on this platform."
+
+    def highlight_region(self, x: int, y: int, width: int, height: int, duration: float = 1.0, color: str = "red", border_width: int = 3) -> str:
+        return "ERROR: overlay is not supported on this platform."

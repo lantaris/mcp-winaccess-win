@@ -79,6 +79,40 @@ def kill(pid_or_name: str) -> tuple[bool, str]:
     return result.returncode == 0, output.strip()
 
 
+def _decode_output(data: bytes) -> str:
+    """Decode console output: try UTF-8 first, then the OEM code page.
+
+    cmd.exe writes in the OEM code page (cp866 on Russian locales), while a
+    console switched to chcp 65001 (or PowerShell with UTF-8 output) writes
+    UTF-8. Decode UTF-8 first, falling back to the OEM code page.
+    """
+    for encoding in ("utf-8", "oem"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", errors="replace")
+
+
+def run_command(command: str, cwd: str = "", timeout: float = 30.0, shell: str = "cmd") -> tuple[int, str, str]:
+    """Run a console command and return (exit_code, stdout, stderr).
+
+    ``shell`` is ``"cmd"`` (default, via ``cmd.exe /c``) or ``"powershell"``.
+    Blocks up to ``timeout`` seconds.
+    """
+    if shell == "powershell":
+        cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command]
+    else:
+        cmd = ["cmd", "/c", command]
+    result = subprocess.run(
+        cmd,
+        cwd=cwd or None,
+        capture_output=True,
+        timeout=timeout,
+    )
+    return result.returncode, _decode_output(result.stdout or b""), _decode_output(result.stderr or b"")
+
+
 def list_processes(filter_text: str = "") -> list[tuple[int, str]]:
     """Return (pid, exe_name) for running processes, optionally filtered by substring."""
     snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)

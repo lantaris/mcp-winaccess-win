@@ -60,7 +60,7 @@ try { $listener.ClearNotifications(); Write-Output "cleared" } catch { Write-Out
 
 def _run(script: str) -> str:
     handle, path = tempfile.mkstemp(suffix=".ps1")
-    with os.fdopen(handle, "w", encoding="utf-8") as stream:
+    with os.fdopen(handle, "w", encoding="utf-8-sig") as stream:
         stream.write(script)
     try:
         result = subprocess.run(

@@ -1,6 +1,6 @@
 [project]
 name = "mcp-winaccess-win"
-version = "1.6.0"
+version = "1.8.0"
 description = "Windows-only desktop automation MCP server (ctypes + UI Automation, no pyautogui/pywinauto)"
 readme = "README.md"
 license = "MIT"
