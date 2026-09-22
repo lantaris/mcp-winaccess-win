@@ -33,18 +33,12 @@ if HAS_CV2:
 if HAS_TESSERACT:
     import pytesseract
 
-    from adapter import tesseract_setup
-
-    _tesseract_cmd = tesseract_setup.find_tesseract()
-    if _tesseract_cmd:
-        pytesseract.pytesseract.tesseract_cmd = _tesseract_cmd
-
 
 def _tesseract_ready() -> bool:
     """Ensure a Tesseract binary is available (auto-installing it on first use)."""
     if not HAS_TESSERACT:
         return False
-    from adapter import tesseract_setup
+    from mcp_winaccess_win.adapter import tesseract_setup
 
     path = tesseract_setup.ensure_tesseract()
     if path:
@@ -221,7 +215,7 @@ class BaseAdapter:
 
     def ocr_screen(self, left: int = 0, top: int = 0, width: int = 0, height: int = 0, lang: str = "") -> str:
         if not _tesseract_ready():
-            return "ERROR: OCR requires the Tesseract binary (auto-install failed; set TESSERACT_CMD or install Tesseract)."
+            return "ERROR: OCR requires the Tesseract binary (auto-install failed; set --tesseract_cmd or install Tesseract)."
         image = self.screenshot_region(left, top, width, height) if width and height else self.screenshot()
         try:
             text = pytesseract.image_to_string(image, lang=lang or None)
@@ -231,7 +225,7 @@ class BaseAdapter:
 
     def find_text_on_screen(self, text: str, confidence: int = 60, lang: str = "") -> str:
         if not _tesseract_ready():
-            return "ERROR: OCR requires the Tesseract binary (auto-install failed; set TESSERACT_CMD or install Tesseract)."
+            return "ERROR: OCR requires the Tesseract binary (auto-install failed; set --tesseract_cmd or install Tesseract)."
         try:
             data = pytesseract.image_to_data(self.screenshot(), output_type=pytesseract.Output.DICT, lang=lang or None)
         except Exception as exc:

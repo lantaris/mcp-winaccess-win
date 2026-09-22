@@ -7,13 +7,13 @@ import re
 import time
 from typing import Any
 
-from adapter import win32_clipboard as clipboard
-from adapter import win32_input as input
-from adapter import win32_notifications
-from adapter import win32_process as process
-from adapter import win32_screen as screen
-from adapter import win32_window as win
-from adapter.base import SYSTEM_KEYS, BaseAdapter
+from mcp_winaccess_win.adapter import win32_clipboard as clipboard
+from mcp_winaccess_win.adapter import win32_input as input
+from mcp_winaccess_win.adapter import win32_notifications
+from mcp_winaccess_win.adapter import win32_process as process
+from mcp_winaccess_win.adapter import win32_screen as screen
+from mcp_winaccess_win.adapter import win32_window as win
+from mcp_winaccess_win.adapter.base import SYSTEM_KEYS, BaseAdapter
 
 _UIA_AVAILABLE = importlib.util.find_spec("comtypes") is not None
 
@@ -27,7 +27,7 @@ class WindowsAdapter(BaseAdapter):
         self.uia: Any = None
         if _UIA_AVAILABLE:
             try:
-                from adapter.uia import UiaClient
+                from mcp_winaccess_win.adapter.uia import UiaClient
 
                 self.uia = UiaClient()
             except Exception:
@@ -138,8 +138,9 @@ class WindowsAdapter(BaseAdapter):
 
     def press_key(self, key: str) -> str:
         mapped = SYSTEM_KEYS.get((key or "").lower().strip(), key)
-        input.press_key(mapped)
-        return f"Pressed key: {mapped}"
+        if input.press_key(mapped):
+            return f"Pressed key: {mapped}"
+        return f"ERROR: unknown key '{mapped}'."
 
     def hotkey(self, keys) -> str:
         input.hotkey(keys)
@@ -838,7 +839,7 @@ class WindowsAdapter(BaseAdapter):
         rect = self.uia.info(control).get("rect")
         if not rect:
             return f"ERROR: control '{control_identifier}' has no position."
-        from adapter import win32_overlay
+        from mcp_winaccess_win.adapter import win32_overlay
 
         win32_overlay.highlight(rect[0], rect[1], rect[2], rect[3], duration, color, width)
         return f"Highlighted '{control_identifier}' for {duration}s"

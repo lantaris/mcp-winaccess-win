@@ -1,4 +1,4 @@
-# Specification — mcp-winaccess-win v1.5.0
+# Specification — mcp-winaccess-win v1.6.0
 
 ## Platform
 - **Windows only** (10/11, x64). The package imports Windows-specific ctypes modules and does not
@@ -8,42 +8,45 @@
 
 ## Protocol
 - MCP via the `mcp` Python SDK v2 (`MCPServer` from `mcp.server.mcpserver`).
-- Transports: `stdio` (default) and `streamable-http`.
-  - `MCP_WINACCESS_TRANSPORT=streamable-http`, `MCP_WINACCESS_HOST`, `MCP_WINACCESS_PORT`.
+- Transports: `local` (stdio, default) and `remote` (streamable-http), selected by `--transport`.
+  - `--listen` (default `0.0.0.0`), `--port` (default `8765`).
+  - `--token` enables Bearer authentication on the HTTP endpoint and is **required** when
+    `--listen` is not loopback.
 - Tools are registered by capability (`adapter.supports(capability)`); unsupported tools are
   absent from `tools/list`. 90 tools are exposed on Windows.
 
-## Environment variables
-| Variable | Default | Meaning |
+## Command-line arguments
+| Argument | Default | Meaning |
 |---|---|---|
-| `MCP_WINACCESS_TRANSPORT` | `stdio` | `stdio` or `streamable-http` |
-| `MCP_WINACCESS_HOST` | `127.0.0.1` | HTTP bind address |
-| `MCP_WINACCESS_PORT` | `8765` | HTTP port |
-| `TESSERACT_CMD` | auto | Path to `tesseract.exe` (overrides auto-install/`PATH`) |
-| `MCP_WINACCESS_AUTO_TESSERACT` | `1` | set to `0` to disable automatic Tesseract install |
+| `--transport` | `local` | `local` (stdio) or `remote` (streamable-http) |
+| `--listen` | `0.0.0.0` | HTTP bind address (remote only) |
+| `--port` | `8765` | HTTP port (remote only) |
+| `--token` | *(none)* | Bearer token required for HTTP (remote only) |
+| `--tesseract_cmd` | `auto` | `auto`, or an explicit path to `tesseract.exe` |
+| `--auto-tesseract` / `--no-auto-tesseract` | on | automatic Tesseract install |
 
 ## Architecture
-- `server.py` — thin `@tool(description, capability)` wrappers gated by `adapter.supports(capability)`.
-- `adapter/__init__.py` — `get_adapter()` returns `WindowsAdapter` (fallback to `BaseAdapter`).
-- `adapter/base.py` — interface, capability flags, shared helpers, vision/OCR, JPEG encoding, grid drawing.
-- `adapter/win32_input.py` — ctypes `SendInput`: mouse (absolute/relative), keyboard, Unicode text
+- `mcp_winaccess_win/server.py` — thin `@tool(description, capability)` wrappers gated by `adapter.supports(capability)`.
+- `mcp_winaccess_win/adapter/__init__.py` — `get_adapter()` returns `WindowsAdapter` (fallback to `BaseAdapter`).
+- `mcp_winaccess_win/adapter/base.py` — interface, capability flags, shared helpers, vision/OCR, JPEG encoding, grid drawing.
+- `mcp_winaccess_win/adapter/win32_input.py` — ctypes `SendInput`: mouse (absolute/relative), keyboard, Unicode text
   (`KEYEVENTF_UNICODE`), scroll (v/h), drag, key/mouse hold; per-monitor-v2 DPI awareness.
-- `adapter/win32_screen.py` — Pillow `ImageGrab` (`bbox`, `all_screens`, window handle),
+- `mcp_winaccess_win/adapter/win32_screen.py` — Pillow `ImageGrab` (`bbox`, `all_screens`, window handle),
   `EnumDisplayMonitors`/`GetMonitorInfoW` (+ DPI scale), `GetPixel`, cursor drawing, image comparison.
-- `adapter/win32_clipboard.py` — Win32 clipboard via ctypes: text, files (CF_HDROP), image (CF_DIB),
+- `mcp_winaccess_win/adapter/win32_clipboard.py` — Win32 clipboard via ctypes: text, files (CF_HDROP), image (CF_DIB),
   clear; `OpenClipboard` retries for transient contention.
-- `adapter/win32_window.py` — window enumeration/management, foreground activation, process exe
+- `mcp_winaccess_win/adapter/win32_window.py` — window enumeration/management, foreground activation, process exe
   name, visibility/hung checks, `EM_GETSEL`/`WM_GETTEXT` helpers.
-- `adapter/win32_overlay.py` — temporary highlight rectangle (GDI).
-- `adapter/win32_notifications.py` — notification listing via WinRT `UserNotificationListener`.
-- `adapter/win32_process.py` — process launch (detached, `DETACHED_PROCESS` + `DEVNULL`),
+- `mcp_winaccess_win/adapter/win32_overlay.py` — temporary highlight rectangle (GDI).
+- `mcp_winaccess_win/adapter/win32_notifications.py` — notification listing via WinRT `UserNotificationListener`.
+- `mcp_winaccess_win/adapter/win32_process.py` — process launch (detached, `DETACHED_PROCESS` + `DEVNULL`),
   force-kill (`taskkill /F /T`) and enumeration (Toolhelp32 snapshot).
-- `adapter/tesseract_setup.py` — resolves the Tesseract binary or auto-installs it (downloads the
+- `mcp_winaccess_win/adapter/tesseract_setup.py` — resolves the Tesseract binary or auto-installs it (downloads the
   UB-Mannheim installer, extracts it with 7-Zip into `%LOCALAPPDATA%\mcp-winaccess\tesseract`, and
   fetches `eng`/`rus` language data from tessdata_fast).
-- `adapter/uia.py` — UI Automation (COM) via `comtypes`: search, patterns, element-at-point,
+- `mcp_winaccess_win/adapter/uia.py` — UI Automation (COM) via `comtypes`: search, patterns, element-at-point,
   list/table extraction, menu state.
-- `adapter/windows.py` — `WindowsAdapter` composing the modules above.
+- `mcp_winaccess_win/adapter/windows.py` — `WindowsAdapter` composing the modules above.
 
 ## Capabilities
 `screenshot`, `screenshot_region`, `screenshot_monitor`, `screenshot_window`, `screenshot_element`,
@@ -57,11 +60,12 @@
 
 ## Dependencies
 - `mcp>=2.0.0`, `Pillow>=11.2.1` (needed for `ImageGrab(window=...)`), `comtypes>=1.4.0`,
-  `pytesseract>=0.3.10` (OCR is installed by default).
+  `pytesseract>=0.3.10` (OCR is installed by default), `starlette` + `uvicorn` (for the
+  `remote`/streamable-http transport and Bearer middleware).
 - Extras: `vision` (`opencv-python`).
 - The Tesseract **binary** is auto-installed on first OCR use (UB-Mannheim installer extracted with
-  7-Zip into `%LOCALAPPDATA%\mcp-winaccess\tesseract`); `TESSERACT_CMD` overrides it and
-  `MCP_WINACCESS_AUTO_TESSERACT=0` disables the automatic install.
+  7-Zip into `%LOCALAPPDATA%\mcp-winaccess\tesseract`); `--tesseract_cmd <path>` overrides it and
+  `--no-auto-tesseract` disables the automatic install.
 - WinRT notification APIs are accessed through `powershell` (no Python dependency).
 
 ## Robustness and performance
@@ -82,6 +86,15 @@
 - `switch_desktop` / `move_window_to_desktop` use the `Win+Ctrl(+Shift)+Arrow` shortcuts.
 - Tesseract language data: `eng` and `rus` are downloaded automatically; add more by dropping
   `*.traineddata` into the managed `tessdata` directory.
+
+## Changes in 1.6.0
+- Configuration moved from environment variables to command-line arguments: `--transport
+  {local,remote}`, `--listen`, `--port`, `--tesseract_cmd`, `--auto-tesseract`/`--no-auto-tesseract`.
+- Added HTTP Bearer authentication (`--token`) for the `remote` transport; a token is required when
+  `--listen` is not loopback.
+- Repackaged under the `mcp_winaccess_win` namespace (was a bare `server.py` + `adapter`), so the
+  installed tool no longer depends on the current working directory or collides with other packages
+  named `adapter`. Console script: `mcp-winaccess-win = "mcp_winaccess_win.server:main"`.
 
 ## Changes in 1.5.0
 - OCR no longer requires a manual Tesseract install: `adapter/tesseract_setup.py` resolves an existing
@@ -121,5 +134,5 @@
   against a live interactive desktop session.
 
 ## Packaging
-- `pyproject.toml` (hatchling), `only-include = ["server.py", "adapter"]`.
-- Console script: `mcp-winaccess-win = "server:main"`.
+- `pyproject.toml` (hatchling), `only-include = ["mcp_winaccess_win"]`.
+- Console script: `mcp-winaccess-win = "mcp_winaccess_win.server:main"`.

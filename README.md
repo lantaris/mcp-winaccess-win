@@ -1,6 +1,6 @@
 # mcp-winaccess-win
 
-**Version 1.5.0** · Windows-only desktop automation MCP server. Built directly on the OS APIs —
+**Version 1.6.0** · Windows-only desktop automation MCP server. Built directly on the OS APIs —
 **ctypes** (`SendInput`, `ImageGrab`, Win32 windows, clipboard) and **UI Automation** via
 `comtypes` — with **no `pyautogui` / `pywinauto` / `pywin32`**.
 
@@ -22,44 +22,60 @@ pip install "mcp-winaccess-win[vision]"    # optional: OpenCV template matching
 
 The **Tesseract binary** (a system program, not a Python package) is downloaded and installed
 automatically on first OCR use into `%LOCALAPPDATA%\mcp-winaccess\tesseract` (with `eng` + `rus`
-language data). Set `TESSERACT_CMD` to use an existing install, or `MCP_WINACCESS_AUTO_TESSERACT=0`
-to disable the automatic install (see Troubleshooting).
+language data). Use `--tesseract_cmd <path>` to point at an existing install, or
+`--no-auto-tesseract` to disable the automatic install (see Troubleshooting).
 
 ## Run
 
 ```
-python server.py
+python -m mcp_winaccess_win.server
 # or the console script
 mcp-winaccess-win
 ```
 
-Remote MCP (streamable-http):
+### Command-line arguments
 
-```
-set MCP_WINACCESS_TRANSPORT=streamable-http
-set MCP_WINACCESS_HOST=127.0.0.1
-set MCP_WINACCESS_PORT=8765
-python server.py
-```
-
-### Environment variables
-
-| Variable | Default | Meaning |
+| Argument | Default | Meaning |
 |---|---|---|
-| `MCP_WINACCESS_TRANSPORT` | `stdio` | `stdio` or `streamable-http` |
-| `MCP_WINACCESS_HOST` | `127.0.0.1` | HTTP bind address |
-| `MCP_WINACCESS_PORT` | `8765` | HTTP port |
-| `TESSERACT_CMD` | auto | Path to `tesseract.exe` (overrides auto-install/`PATH`) |
-| `MCP_WINACCESS_AUTO_TESSERACT` | `1` | set to `0` to disable automatic Tesseract install |
+| `--transport` | `local` | `local` (stdio) or `remote` (streamable-http) |
+| `--listen` | `0.0.0.0` | HTTP bind address (remote only) |
+| `--port` | `8765` | HTTP port (remote only) |
+| `--token` | *(none)* | Bearer token required for HTTP (remote only) |
+| `--tesseract_cmd` | `auto` | `auto`, or an explicit path to `tesseract.exe` |
+| `--auto-tesseract` | on | automatic Tesseract install; `--no-auto-tesseract` disables it |
+
+Local (stdio) is the default and needs no arguments. To serve over HTTP, protect the desktop
+with a token — a token is **required** whenever `--listen` is not loopback:
+
+```
+mcp-winaccess-win --transport remote --listen 127.0.0.1 --port 8765 --token mysecret
+```
 
 ## OpenCode config (`opencode.jsonc`)
+
+Local (stdio) — OpenCode launches the server itself:
 
 ```jsonc
 {
   "mcp": {
     "winaccess": {
       "type": "local",
-      "command": ["uvx", "mcp-winaccess-win"],
+      "command": ["uvx", "mcp-winaccess-win", "--tesseract_cmd", "auto"],
+      "enabled": true
+    }
+  }
+}
+```
+
+Remote (streamable-http) — the token goes in the `Authorization` header:
+
+```jsonc
+{
+  "mcp": {
+    "winaccess": {
+      "type": "remote",
+      "url": "http://127.0.0.1:8765/mcp",
+      "headers": { "Authorization": "Bearer mysecret" },
       "enabled": true
     }
   }
@@ -77,12 +93,14 @@ python server.py
 | UI tree, menus, dialogs | UI Automation COM via `comtypes` |
 | Vision / OCR | OpenCV template matching / pytesseract with an auto-installed Tesseract binary |
 
-Modules: `server.py` (tool wrappers), `adapter/windows.py` (adapter), `adapter/win32_input.py`,
-`adapter/win32_screen.py`, `adapter/win32_window.py`, `adapter/win32_clipboard.py`,
-`adapter/win32_overlay.py` (element highlight), `adapter/win32_notifications.py`,
-`adapter/win32_process.py` (launch/kill/enumerate processes),
-`adapter/tesseract_setup.py` (auto-install OCR engine), `adapter/uia.py` (UI Automation),
-`adapter/base.py` (interface + shared helpers).
+Modules: `mcp_winaccess_win/server.py` (tool wrappers), `mcp_winaccess_win/adapter/windows.py`
+(adapter), `mcp_winaccess_win/adapter/win32_input.py`,
+`mcp_winaccess_win/adapter/win32_screen.py`, `mcp_winaccess_win/adapter/win32_window.py`,
+`mcp_winaccess_win/adapter/win32_clipboard.py`,
+`mcp_winaccess_win/adapter/win32_overlay.py` (element highlight), `mcp_winaccess_win/adapter/win32_notifications.py`,
+`mcp_winaccess_win/adapter/win32_process.py` (launch/kill/enumerate processes),
+`mcp_winaccess_win/adapter/tesseract_setup.py` (auto-install OCR engine), `mcp_winaccess_win/adapter/uia.py` (UI Automation),
+`mcp_winaccess_win/adapter/base.py` (interface + shared helpers).
 
 ## Conventions
 
@@ -211,8 +229,9 @@ screenshot(grid=True)
 
 - **OCR fails** — the Tesseract binary is auto-installed on first use (downloaded via the UB-Mannheim
   installer, extracted with 7-Zip, into `%LOCALAPPDATA%\mcp-winaccess\tesseract`). If that fails
-  (no network / no 7-Zip), install Tesseract manually and set `TESSERACT_CMD`. Language data `eng`
-  and `rus` are fetched automatically; add more by dropping `*.traineddata` into the managed `tessdata`.
+  (no network / no 7-Zip), install Tesseract manually and pass `--tesseract_cmd <path>`. Language
+  data `eng` and `rus` are fetched automatically; add more by dropping `*.traineddata` into the
+  managed `tessdata`.
 - **Vision tools missing** — install the `vision` extra (`opencv-python`).
 - **UI tree tools missing** — `comtypes` is required (installed with the package).
 

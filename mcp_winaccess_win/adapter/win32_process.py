@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import shlex
 import subprocess
 from ctypes import wintypes
 
@@ -46,9 +47,9 @@ def run(path: str, args: str = "", cwd: str = "") -> int:
     Detached with DEVNULL handles so the child never inherits (and thus never
     holds open) the MCP stdio pipe.
     """
-    command = path
+    command = [path]
     if args:
-        command = f'"{path}" {args}' if " " in path else f"{path} {args}"
+        command.extend(shlex.split(args, posix=False))
     flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
     proc = subprocess.Popen(
         command,

@@ -7,8 +7,9 @@ so unsupported actions never appear in the agent's tool list.
 
 from __future__ import annotations
 
+import argparse
+import contextlib
 import io
-import os
 import sys
 from typing import Annotated, Literal
 
@@ -16,10 +17,62 @@ from mcp.server.mcpserver import Image, MCPServer
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from adapter import get_adapter
+from mcp_winaccess_win.adapter import get_adapter, tesseract_setup
 
 if sys.platform != "win32":
     raise RuntimeError(f"mcp-winaccess-win is Windows-only (detected platform: {sys.platform}).")
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="mcp-winaccess-win",
+        description="Windows-only desktop automation MCP server (ctypes + UI Automation).",
+    )
+    parser.add_argument(
+        "--transport",
+        choices=["local", "remote"],
+        default="local",
+        help="'local' uses stdio; 'remote' serves streamable-http on --listen/--port (default: local).",
+    )
+    parser.add_argument(
+        "--listen",
+        default="0.0.0.0",
+        help="HTTP bind address for --transport remote (default: 0.0.0.0).",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="HTTP port for --transport remote (default: 8765).",
+    )
+    parser.add_argument(
+        "--tesseract_cmd",
+        default="auto",
+        help="'auto' resolves Tesseract automatically, or an explicit path to tesseract.exe (default: auto).",
+    )
+    parser.add_argument(
+        "--auto-tesseract",
+        dest="auto_tesseract",
+        action="store_true",
+        default=True,
+        help="enable automatic Tesseract install/download (default).",
+    )
+    parser.add_argument(
+        "--no-auto-tesseract",
+        dest="auto_tesseract",
+        action="store_false",
+        help="disable automatic Tesseract install.",
+    )
+    parser.add_argument(
+        "--token",
+        default="",
+        help="Bearer token required for --transport remote (via the 'Authorization' header).",
+    )
+    return parser
+
+
+_args = _build_parser().parse_args()
+tesseract_setup.configure(tesseract_cmd=_args.tesseract_cmd, auto_tesseract=_args.auto_tesseract)
 
 adapter = get_adapter()
 
@@ -50,7 +103,7 @@ Conventions (apply to every tool unless stated otherwise):
   and which change it; clients may use them to decide whether to ask for confirmation.
 """
 
-mcp = MCPServer("mcp-winaccess", version="1.5.0", instructions=INSTRUCTIONS)
+mcp = MCPServer("mcp-winaccess", version="1.6.0", instructions=INSTRUCTIONS)
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, idempotent_hint=True)
 READ_ONLY_ONCE = ToolAnnotations(read_only_hint=True)
@@ -276,7 +329,7 @@ def type_text(text: Annotated[str, Field(description="text to type (BMP only; \\
 @tool(
     "press_key: Presses one key: a letter/digit, 'enter', 'tab', 'esc', 'f5', etc., or a system key "
     "('win', 'volumeup', 'volumedown', 'volumemute', 'playpause', 'nexttrack', 'prevtrack', 'printscreen'). "
-    "An unknown name is ignored but the call still reports success. System keys change system state.",
+    "An unknown name returns 'ERROR: unknown key'. System keys change system state.",
     title="Press key",
     annotations=WRITE,
 )
@@ -441,7 +494,7 @@ def click_image(
 @tool(
     "ocr_screen: OCR text over the screen or a region (left, top, width, height; width/height 0 = full "
     "screen). lang e.g. 'eng' or 'rus+eng'. The Tesseract binary is downloaded and installed automatically "
-    "on first use (disable with MCP_WINACCESS_AUTO_TESSERACT=0; override with TESSERACT_CMD). "
+    "on first use (disable with --no-auto-tesseract; override with --tesseract_cmd). "
     "Empty result -> '(no text found)'.",
     capability="ocr",
     title="OCR screen",
@@ -1319,15 +1372,72 @@ def list_processes(filter: Annotated[str, Field(description="image-name substrin
     return adapter.list_processes(filter)
 
 
-def main():
-    transport = os.environ.get("MCP_WINACCESS_TRANSPORT", "stdio").lower()
-    if transport in ("http", "streamable-http", "streamable_http"):
-        host = os.environ.get("MCP_WINACCESS_HOST", "127.0.0.1")
-        port = int(os.environ.get("MCP_WINACCESS_PORT", "8765"))
-        mcp.run(transport="streamable-http", host=host, port=port)
-    else:
-        mcp.run(transport="stdio")
+class _BearerAuthMiddleware:
+    """Require 'Authorization: Bearer <token>' on every HTTP request."""
+
+    def __init__(self, app, token: str):
+        self.app = app
+        self.token = token
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
+            if headers.get("authorization") != f"Bearer {self.token}":
+                body = b'{"error": "unauthorized"}'
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 401,
+                        "headers": [
+                            (b"content-type", b"application/json"),
+                            (b"content-length", str(len(body)).encode()),
+                        ],
+                    }
+                )
+                await send({"type": "http.response.body", "body": body})
+                return
+        await self.app(scope, receive, send)
+
+
+def _is_loopback(host: str) -> bool:
+    value = (host or "").strip().lower()
+    return value in ("localhost", "127.0.0.1", "::1") or value.startswith("127.")
+
+
+def _build_remote_app():
+    from starlette.applications import Starlette
+    from starlette.middleware import Middleware
+    from starlette.routing import Mount
+
+    @contextlib.asynccontextmanager
+    async def _lifespan(app):
+        async with mcp.session_manager.run():
+            yield
+
+    middleware = [Middleware(_BearerAuthMiddleware, token=_args.token)] if _args.token else None
+    return Starlette(
+        routes=[Mount("/", app=mcp.streamable_http_app(host=_args.listen))],
+        middleware=middleware,
+        lifespan=_lifespan,
+    )
+
+
+def main() -> int:
+    if _args.transport == "remote":
+        if not _args.token and not _is_loopback(_args.listen):
+            print(
+                "ERROR: --token is required when --listen is not loopback "
+                "(refusing to expose the desktop unauthenticated).",
+                file=sys.stderr,
+            )
+            return 1
+        import uvicorn
+
+        uvicorn.run(_build_remote_app(), host=_args.listen, port=_args.port, log_level="warning")
+        return 0
+    mcp.run(transport="stdio")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

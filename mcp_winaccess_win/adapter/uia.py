@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from collections import deque
 from ctypes import wintypes
 
 import comtypes
@@ -141,9 +142,9 @@ class UiaClient:
 
     def descendants(self, element, max_items: int = 4000) -> list:
         result: list = []
-        stack = list(self.children(element))
+        stack = deque(self.children(element))
         while stack and len(result) < max_items:
-            node = stack.pop(0)
+            node = stack.popleft()
             result.append(node)
             try:
                 stack.extend(self.children(node))

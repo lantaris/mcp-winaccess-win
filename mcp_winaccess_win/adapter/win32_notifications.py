@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 
 _AWAIT = r"""
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
 $asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
     $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1'
@@ -66,6 +67,8 @@ def _run(script: str) -> str:
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=40,
         )
         return result.stdout or ""

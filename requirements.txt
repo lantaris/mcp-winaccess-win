@@ -1,4 +1,0 @@
-mcp>=2.0.0
-Pillow>=11.2.1
-comtypes>=1.4.0
-pytesseract>=0.3.10

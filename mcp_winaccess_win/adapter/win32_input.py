@@ -323,11 +323,12 @@ def key_up(key: str) -> None:
         _send(_key_input(vk=vk, flags=KEYEVENTF_KEYUP))
 
 
-def press_key(key: str) -> None:
+def press_key(key: str) -> bool:
     vk = _vk_for_key(key)
     if not vk:
-        return
+        return False
     _send(_key_input(vk=vk), _key_input(vk=vk, flags=KEYEVENTF_KEYUP))
+    return True
 
 
 def hotkey(keys) -> None:

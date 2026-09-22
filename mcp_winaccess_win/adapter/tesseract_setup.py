@@ -4,7 +4,7 @@ Resolves an existing Tesseract binary, or installs one into a per-user managed
 directory by downloading the official UB-Mannheim installer and extracting it
 with 7-Zip (no admin required). Language data is fetched from tessdata_fast.
 
-Disable the automatic install with MCP_WINACCESS_AUTO_TESSERACT=0.
+Disable the automatic install with --no-auto-tesseract.
 """
 
 from __future__ import annotations
@@ -40,6 +40,16 @@ SEVEN_ZIP_CANDIDATES = (
 _lock = threading.Lock()
 _resolved: str | None = None
 _install_failed = False
+_cmd_override: str | None = None
+_auto_install = True
+
+
+def configure(tesseract_cmd: str = "auto", auto_tesseract: bool = True) -> None:
+    """Set the Tesseract command override and auto-install policy (called from the CLI)."""
+    global _cmd_override, _auto_install
+    value = (tesseract_cmd or "").strip()
+    _cmd_override = None if not value or value.lower() == "auto" else value
+    _auto_install = bool(auto_tesseract)
 
 
 def _existing(path: str | None) -> str | None:
@@ -59,7 +69,7 @@ def _find_seven_zip() -> str | None:
 
 def _candidates() -> list[str]:
     values = [
-        os.environ.get("TESSERACT_CMD"),
+        _cmd_override,
         shutil.which("tesseract"),
         *STD_LOCATIONS,
         os.path.join(MANAGED_DIR, "tesseract.exe"),
@@ -76,7 +86,7 @@ def find_tesseract() -> str | None:
 
 
 def _auto_install_enabled() -> bool:
-    return os.environ.get("MCP_WINACCESS_AUTO_TESSERACT", "1").strip().lower() not in ("0", "false", "no", "off")
+    return _auto_install
 
 
 def _download(url: str, dest: str, timeout: float = 300.0) -> None:
@@ -172,7 +182,7 @@ def main() -> int:  # pragma: no cover - manual helper
     if exe:
         print(f"Tesseract: {exe}")
         return 0
-    print("Tesseract could not be installed automatically. Set TESSERACT_CMD manually.", file=sys.stderr)
+    print("Tesseract could not be installed automatically. Pass --tesseract_cmd manually.", file=sys.stderr)
     return 1
 
 
